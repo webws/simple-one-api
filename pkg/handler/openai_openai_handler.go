@@ -84,8 +84,12 @@ func getConfig(s *config.ModelDetails, oaiReqParam *OAIRequestParam) (openai.Cli
 		mylog.Logger.Info("Using default server URL",
 			zap.String("server_url", serverURL)) // 记录默认服务器 URL
 	}
-
 	if serverURL != "" {
+		// 如果req model是 gpt-4o 		conf.BaseURL = serverURL
+		if strings.Contains(req.Model, "gpt-4o") {
+			conf.BaseURL = serverURL
+			return conf, nil
+		}
 		if formattedURL, ok := validateAndFormatURL(serverURL); ok {
 			conf.BaseURL = formattedURL
 
