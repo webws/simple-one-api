@@ -4,30 +4,34 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"os"
+	"sort"
+	"strings"
+
+	"simple-one-api/pkg/mylog"
+	"simple-one-api/pkg/utils"
+
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
-	"log"
-	"os"
-	"simple-one-api/pkg/mylog"
-	"simple-one-api/pkg/utils"
-	"sort"
-	"strings"
 )
 
 var GSOAConf *Configuration
 
-var ModelToService map[string][]ModelDetails
-var LoadBalancingStrategy string
-var ServerPort string
-var APIKey string
-var Debug bool
-var LogLevel string
-var SupportModels map[string]string
-var GlobalModelRedirect map[string]string
-var SupportMultiContentModels = []string{"gpt-4o", "gpt-4-turbo", "glm-4v", "gemini-*"}
-var GProxyConf *ProxyConf
-var GTranslation *Translation
+var (
+	ModelToService            map[string][]ModelDetails
+	LoadBalancingStrategy     string
+	ServerPort                string
+	APIKey                    string
+	Debug                     bool
+	LogLevel                  string
+	SupportModels             map[string]string
+	GlobalModelRedirect       map[string]string
+	SupportMultiContentModels = []string{"gpt-4o", "gpt-4-turbo", "glm-4v", "gemini-*"}
+	GProxyConf                *ProxyConf
+	GTranslation              *Translation
+)
 
 var apiKeyMap map[string]APIKeyConfig
 
@@ -100,6 +104,7 @@ type Configuration struct {
 	Translation        Translation               `json:"translation" yaml:"services"`
 	EnableWeb          bool                      `json:"enable_web" yaml:"enable_web"`
 	APIKeys            []APIKeyConfig            `json:"api_keys" yaml:"api_keys"`
+	CustomHeaders      map[string]string         `json:"custom_headers" yaml:"custom_headers"`
 }
 
 // ModelDetails 结构用于返回模型相关的服务信息
@@ -138,13 +143,13 @@ func createModelToServiceMap(config Configuration) map[string][]ModelDetails {
 						ServiceID:    uuid.New().String(),
 					}
 
-					//modelNameLower := strings.ToLower(modelName)
+					// modelNameLower := strings.ToLower(modelName)
 					modelToService[modelName] = append(modelToService[modelName], detail)
 
-					//存储支持的模型名称列表
+					// 存储支持的模型名称列表
 					SupportModels[modelName] = modelName
 					for k, v := range detail.ModelRedirect {
-						//support models
+						// support models
 						SupportModels[k] = v
 
 						_, exists := SupportModels[v]
@@ -154,7 +159,7 @@ func createModelToServiceMap(config Configuration) map[string][]ModelDetails {
 
 						//
 						modelToService[k] = append(modelToService[k], detail)
-						//delete(modelToService, modelName)
+						// delete(modelToService, modelName)
 					}
 				}
 			}
@@ -165,7 +170,6 @@ func createModelToServiceMap(config Configuration) map[string][]ModelDetails {
 
 // InitConfig 初始化配置
 func InitConfig(configName string) error {
-
 	// 解析 JSON 数据到结构体
 	var conf Configuration
 
@@ -303,7 +307,6 @@ func GetModelService(modelName string) (*ModelDetails, error) {
 }
 
 func GetRandomEnabledModelDetails() (*ModelDetails, error) {
-
 	index := GetLBIndex(LoadBalancingStrategy, KEYNAME_RANDOM, len(ModelToService))
 
 	keys := make([]string, 0, len(ModelToService))
@@ -337,7 +340,6 @@ func GetRandomEnabledModelDetailsV1() (*ModelDetails, string, error) {
 	//	log.Println(randomString)
 
 	return md, randomString, nil
-
 }
 
 // GetModelMapping 函数，根据model在ModelMap中查找对应的映射，如果找不到则返回原始model

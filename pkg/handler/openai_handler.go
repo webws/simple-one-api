@@ -4,19 +4,21 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/gin-gonic/gin"
-	"github.com/sashabaranov/go-openai"
-	"go.uber.org/zap"
 	"io"
 	"net/http"
+	"strings"
+	"time"
+
 	"simple-one-api/pkg/adapter"
 	"simple-one-api/pkg/config"
 	"simple-one-api/pkg/mycommon"
 	"simple-one-api/pkg/mylimiter"
 	"simple-one-api/pkg/mylog"
 	"simple-one-api/pkg/utils"
-	"strings"
-	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/sashabaranov/go-openai"
+	"go.uber.org/zap"
 )
 
 var defaultReqTimeout = 10
@@ -63,7 +65,7 @@ func LogRequestDetails(c *gin.Context) {
 func getBodyDataCopy(c *gin.Context) ([]byte, error) {
 	body, err := c.GetRawData()
 	if err != nil {
-		//c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Unable to read request body"})
+		// c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Unable to read request body"})
 		return nil, err
 	}
 
@@ -139,10 +141,9 @@ func OpenAIHandler(c *gin.Context) {
 }
 
 func HandleOpenAIRequest(c *gin.Context, oaiReq *openai.ChatCompletionRequest) {
-
 	clientModel := oaiReq.Model
 
-	//全局模型重定向名称
+	// 全局模型重定向名称
 	gRedirectModel := config.GetGlobalModelRedirect(clientModel)
 
 	oaiReq.Model = gRedirectModel
@@ -154,7 +155,7 @@ func HandleOpenAIRequest(c *gin.Context, oaiReq *openai.ChatCompletionRequest) {
 		return
 	}
 
-	//模型重定向名称
+	// 模型重定向名称
 	mrModel := config.GetModelRedirect(s, serviceModelName)
 	mpModel := config.GetModelMapping(s, mrModel)
 
@@ -173,11 +174,10 @@ func HandleOpenAIRequest(c *gin.Context, oaiReq *openai.ChatCompletionRequest) {
 		isSupportMC := config.IsSupportMultiContent(oaiReq.Model)
 		if !isSupportMC {
 			mylog.Logger.Warn("model support vision", zap.Bool("isSupportMC", isSupportMC))
-			//convert message
+			// convert message
 			adapter.OpenAIMultiContentRequestToOpenAIContentRequest(oaiReq)
 			mylog.Logger.Info("", zap.Any("oaiReq", oaiReq))
 		} else {
-
 		}
 	}
 
@@ -226,7 +226,6 @@ func HandleOpenAIRequest(c *gin.Context, oaiReq *openai.ChatCompletionRequest) {
 						zap.Error(err),                   // 记录错误对象
 						zap.Int("timeout", timeout),      // 假设 timeout 是 time.Duration 类型
 						zap.Duration("elapsed", elapsed)) // 假设 elapsed 是 time.Duration 类型
-
 				} else if errors.Is(err, context.Canceled) {
 					// Log a message if the operation was canceled.
 					mylog.Logger.Error("Operation canceled %v, actual waiting time: %v", zap.Error(err), zap.Duration("elapsed", elapsed))
@@ -235,7 +234,7 @@ func HandleOpenAIRequest(c *gin.Context, oaiReq *openai.ChatCompletionRequest) {
 					mylog.Logger.Error("Unknown error occurred while waiting for a token: ", zap.Error(err), zap.Duration("elapsed", elapsed))
 				}
 
-				//waitDuration := time.Since(startWaitTime)
+				// waitDuration := time.Since(startWaitTime)
 				mylog.Logger.Info("waited for: ", zap.Duration("elapsed", elapsed))
 				sendErrorResponse(c, http.StatusTooManyRequests, "Request rate limit exceeded")
 				return
@@ -267,8 +266,15 @@ func HandleOpenAIRequest(c *gin.Context, oaiReq *openai.ChatCompletionRequest) {
 			oaiReqParam.httpTransport = transport
 		}
 	}
+	if config.GSOAConf.CustomHeaders != nil {
+		mylog.Logger.Info("CustomHeaders", zap.Any("CustomHeaders", config.GSOAConf.CustomHeaders))
+		for k, v := range config.GSOAConf.CustomHeaders {
+			// 日志记录每个头部的设置
+			c.Request.Header.Set(k, v)
+		}
+	}
 
-	//mylog.Logger.Debug("oaiReq", zap.Any("oaiReq", oaiReq))
+	// mylog.Logger.Debug("oaiReq", zap.Any("oaiReq", oaiReq))
 	oaiReq.Messages = mycommon.NormalizeMessages(oaiReq.Messages)
 
 	if err := dispatchToServiceHandler(c, oaiReqParam); err != nil {
