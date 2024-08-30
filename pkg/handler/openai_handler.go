@@ -3,9 +3,12 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -53,12 +56,65 @@ var serviceHandlerMap = map[string]func(*gin.Context, *OAIRequestParam) error{
 }
 
 func LogRequestDetails(c *gin.Context) {
-	// 使用 zap 的字段记录功能来记录请求细节
-	mylog.Logger.Debug("HTTP request details",
-		zap.String("method", c.Request.Method),
-		zap.String("path", c.Request.URL.Path),
-		zap.Any("parameters", c.Request.URL.Query()),
-		zap.Any("headers", c.Request.Header),
+	// 读取body
+	bodyData, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		mylog.Logger.Error("读取请求体失败", zap.Error(err))
+		return
+	}
+	// 重置body，使其可以再次被读取
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyData))
+
+	// 构建格式化的curl命令
+	var curlLines []string
+	curlLines = append(curlLines, fmt.Sprintf("%s %s HTTP/1.1", c.Request.Method, c.Request.URL.Path))
+
+	// 添加所有头部
+	for key, values := range c.Request.Header {
+		for _, value := range values {
+			curlLines = append(curlLines, fmt.Sprintf("%s: %s", key, value))
+		}
+	}
+
+	// 添加空行分隔头部和body
+	curlLines = append(curlLines, "")
+
+	// 添加请求体
+	if len(bodyData) > 0 {
+		curlLines = append(curlLines, string(bodyData))
+	}
+
+	// 添加空行
+	curlLines = append(curlLines, "")
+
+	// 确保目录存在
+	if err := os.MkdirAll(".prompts/req", os.ModePerm); err != nil {
+		mylog.Logger.Error("创建目录失败", zap.Error(err))
+		return
+	}
+
+	// 将格式化的curl命令写入文件
+	curlString := strings.Join(curlLines, "\n")
+	if err := os.WriteFile(".prompts/req/curl.json", []byte(curlString), 0o644); err != nil {
+		mylog.Logger.Error("写入curl.json失败", zap.Error(err))
+	}
+
+	// 将请求body写入body.json
+	if err := os.WriteFile(".prompts/req/body.json", bodyData, 0o644); err != nil {
+		mylog.Logger.Error("写入body.json失败", zap.Error(err))
+	}
+
+	// 记录curl命令到日志
+	mylog.Logger.Info("完整的curl命令已写入文件 .prompts/req/curl.json")
+	mylog.Logger.Info("请求body已写入文件 .prompts/req/body.json")
+
+	// 记录所有请求详情
+	mylog.Logger.Debug("HTTP请求详情",
+		zap.String("方法", c.Request.Method),
+		zap.String("路径", c.Request.URL.Path),
+		zap.Any("查询参数", c.Request.URL.Query()),
+		zap.Any("请求头", c.Request.Header),
+		zap.String("请求体", string(bodyData)),
 	)
 }
 
@@ -134,6 +190,8 @@ func OpenAIHandler(c *gin.Context) {
 	}
 
 	mycommon.LogChatCompletionRequest(oaiReq)
+
+	logRequestDetails(c, &oaiReq)
 
 	HandleOpenAIRequest(c, &oaiReq)
 
@@ -331,4 +389,38 @@ func getModelDetails(oaiReq *openai.ChatCompletionRequest) (*config.ModelDetails
 
 func sendErrorResponse(c *gin.Context, code int, msg string) {
 	c.JSON(code, gin.H{"error": msg})
+}
+
+func logRequestDetails(c *gin.Context, oaiReq *openai.ChatCompletionRequest) {
+	// 记录模型和其他相关详情
+	mylog.Logger.Info("请求详情",
+		zap.String("模型", oaiReq.Model),
+		zap.Bool("流式", oaiReq.Stream),
+		zap.Float32("温度", oaiReq.Temperature),
+		zap.Int("最大令牌数", oaiReq.MaxTokens))
+	// 创建.prompts和req文件夹
+	if err := os.MkdirAll(".prompts/req", os.ModePerm); err != nil {
+		mylog.Logger.Error("创建文件夹失败", zap.Error(err))
+		return
+	}
+
+	// 将req.messages写入到.prompts/req/req.json中
+	messagesJSON, err := json.Marshal(oaiReq.Messages)
+	if err != nil {
+		mylog.Logger.Error("序列化messages失败", zap.Error(err))
+		return
+	}
+	if err := os.WriteFile(".prompts/req/req.json", messagesJSON, 0o644); err != nil {
+		mylog.Logger.Error("写入req.json失败", zap.Error(err))
+		return
+	}
+
+	// 记录最后一条用户消息
+	for i := len(oaiReq.Messages) - 1; i >= 0; i-- {
+		if oaiReq.Messages[i].Role == openai.ChatMessageRoleUser {
+			mylog.Logger.Info("用户prompt",
+				zap.String("内容", oaiReq.Messages[i].Content))
+			break
+		}
+	}
 }
